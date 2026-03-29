@@ -1,0 +1,97 @@
+"""
+Главный файл запуска Telegram бота
+LonaRPG Community Bot
+Версия: 1.0.0
+"""
+import asyncio
+import logging
+import sys
+
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+
+from config import BOT_TOKEN
+from handlers import router, private_router
+from utils import init_data_files, MuteScheduler
+
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("bot.log", encoding="utf-8")
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+# Функции startup/shutdown будут определены внутри main() для доступа к bot и mute_scheduler
+
+
+async def main():
+    """Главная функция запуска бота"""
+    # Проверка токена
+    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        logger.error("Токен бота не установлен! Установите переменную окружения BOT_TOKEN или укажите токен в config.py")
+        sys.exit(1)
+
+    # Создание бота с настройками по умолчанию
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(
+            parse_mode=ParseMode.HTML
+        )
+    )
+
+    # Создание диспетчера
+    dp = Dispatcher()
+
+    # Создание планировщика мутов
+    mute_scheduler = MuteScheduler(bot)
+
+    # Функции startup/shutdown с замыканием на bot и mute_scheduler
+    async def on_startup():
+        """Действия при запуске бота"""
+        logger.info("Инициализация файлов данных...")
+        init_data_files()
+
+        logger.info("Запуск планировщика размутов...")
+        await mute_scheduler.start()
+
+        bot_info = await bot.get_me()
+        logger.info(f"Бот @{bot_info.username} успешно запущен!")
+
+    async def on_shutdown():
+        """Действия при остановке бота"""
+        logger.info("Остановка планировщика размутов...")
+        await mute_scheduler.stop()
+        logger.info("Бот остановлен.")
+
+    # Регистрация роутеров
+    dp.include_router(private_router)  # Роутер для игнорирования ЛС (первый в очереди)
+    dp.include_router(router)          # Основной роутер команд
+
+    # Регистрация обработчиков startup/shutdown
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    try:
+        logger.info("Запуск бота...")
+        # Удаляем вебхуки и запускаем polling
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        await bot.session.close()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.exception(f"Критическая ошибка: {e}")
+        sys.exit(1)
